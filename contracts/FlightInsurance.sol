@@ -2,12 +2,13 @@
 pragma solidity ^0.8.0;
 
 contract FlightInsurance {
-    address public insurer;
-    address public oracle; // Address of the oracle
-    uint256 public constant PREMIUM = 0.1 ether; // Monthly subscription premium
-    uint256 public constant PAYOUT = 1 ether; // Payout for delayed flights
-    uint256 public constant DELAY_THRESHOLD = 2 hours; // Delay threshold for payout
-    uint256 public constant SUBSCRIPTION_DURATION = 30 days; // Subscription lasts 30 days
+    address public oracle;
+    address public owner;
+
+    uint256 constant PREMIUM = 0.1 ether;
+    uint256 constant PAYOUT = 1 ether;
+    uint256 constant DELAY_THRESHOLD = 2 hours;
+    uint256 constant SUBSCRIPTION_DURATION = 30 days;
 
     struct Policy {
         string flightID;
@@ -18,40 +19,51 @@ contract FlightInsurance {
     struct Subscription {
         bool isActive;
         uint256 startTime;
-        Policy[] policies; // Array of policies for this subscriber
+        Policy[] policies;
     }
 
     mapping(address => Subscription) public subscriptions;
-    mapping(string => bool) public flightDelays; // Tracks flight delay status
-    address[] public allSubscribers; // Tracks all subscriber addresses
+    mapping(string => bool) public flightDelays;
+    address[] public allSubscribers;
+    address[] public allUsersWithFlights;
 
-    // Modifier to restrict actions to the insurer
-    modifier onlyInsurer() {
-        require(msg.sender == insurer, "Only insurer can call this function");
+    // Debug event
+    event DebugTimestamps(
+        address user,
+        string flightID,
+        uint256 blockTimestamp,
+        uint256 flightTimestamp,
+        uint256 delayThreshold,
+        bool meetsDelayRequirement
+    );
+
+    modifier onlyOwner() {
+        require(msg.sender == owner, "Only owner can call this function");
         _;
     }
 
-    // Modifier to restrict actions to the oracle
     modifier onlyOracle() {
         require(msg.sender == oracle, "Only oracle can call this function");
         _;
     }
 
-    constructor() {
-        insurer = msg.sender;
-        oracle = msg.sender; // For testing, oracle is deployer; can be changed later
+    modifier notOracle() {
+        require(msg.sender != oracle, "Oracle cannot perform this action");
+        _;
     }
 
-    // Allow the insurer to set a new oracle address
-    function setOracle(address _oracle) external onlyInsurer {
-        require(_oracle != address(0), "Invalid oracle address");
+    constructor() {
+        owner = msg.sender;
+    }
+
+    function setOracle(address _oracle) external onlyOwner {
         oracle = _oracle;
     }
 
-    // Allow the insurer to deposit funds to cover payouts
-    function depositFunds() external payable onlyInsurer {}
+    function depositFunds() external payable onlyOwner {
+        require(msg.value > 0, "Must deposit some ETH");
+    }
 
-    // Subscribe by paying the monthly premium
     function subscribe() external payable {
         require(msg.value == PREMIUM, "Premium must be 0.1 ETH");
         require(!subscriptions[msg.sender].isActive, "Already subscribed");
@@ -59,16 +71,33 @@ contract FlightInsurance {
         Subscription storage sub = subscriptions[msg.sender];
         sub.isActive = true;
         sub.startTime = block.timestamp;
-        allSubscribers.push(msg.sender); // Add to subscribers list
+
+        bool userExists = false;
+        for (uint i = 0; i < allSubscribers.length; i++) {
+            if (allSubscribers[i] == msg.sender) {
+                userExists = true;
+                break;
+            }
+        }
+        if (!userExists) {
+            allSubscribers.push(msg.sender);
+        }
+
+        userExists = false;
+        for (uint i = 0; i < allUsersWithFlights.length; i++) {
+            if (allUsersWithFlights[i] == msg.sender) {
+                userExists = true;
+                break;
+            }
+        }
+        if (!userExists) {
+            allUsersWithFlights.push(msg.sender);
+        }
     }
 
-    // Register a flight under an active subscription
-    function registerFlight(string memory flightID, uint256 flightTimestamp) external {
+    function registerFlight(string memory flightID, uint256 flightTimestamp) external notOracle {
         Subscription storage sub = subscriptions[msg.sender];
-        require(sub.isActive, "No active subscription");
-        require(block.timestamp < sub.startTime + SUBSCRIPTION_DURATION, "Subscription expired");
 
-        // Check if flightID is already registered for this user
         for (uint i = 0; i < sub.policies.length; i++) {
             require(keccak256(bytes(sub.policies[i].flightID)) != keccak256(bytes(flightID)), "Flight already registered");
         }
@@ -78,48 +107,77 @@ contract FlightInsurance {
             flightTimestamp: flightTimestamp,
             hasPaidOut: false
         }));
+
+        bool userExists = false;
+        for (uint i = 0; i < allUsersWithFlights.length; i++) {
+            if (allUsersWithFlights[i] == msg.sender) {
+                userExists = true;
+                break;
+            }
+        }
+        if (!userExists) {
+            allUsersWithFlights.push(msg.sender);
+        }
     }
 
-    // Oracle updates flight status and triggers payout if delayed
     function updateFlightStatus(string memory flightID, bool delayed) external onlyOracle {
         flightDelays[flightID] = delayed;
-
         if (delayed) {
-            // Iterate through all subscribers
-            for (uint i = 0; i < allSubscribers.length; i++) {
-                address subscriber = allSubscribers[i];
-                Subscription storage sub = subscriptions[subscriber];
-
-                // Skip if subscription is expired
-                if (block.timestamp >= sub.startTime + SUBSCRIPTION_DURATION) {
+            for (uint i = 0; i < allUsersWithFlights.length; i++) {
+                address user = allUsersWithFlights[i];
+                Subscription storage sub = subscriptions[user];
+                
+                bool isActive = sub.isActive && (block.timestamp < sub.startTime + SUBSCRIPTION_DURATION);
+                if (sub.isActive && !isActive) {
                     sub.isActive = false;
-                    continue;
                 }
 
-                // Check each policy for this subscriber
                 for (uint j = 0; j < sub.policies.length; j++) {
                     Policy storage policy = sub.policies[j];
+                    bool meetsDelay = block.timestamp >= policy.flightTimestamp + DELAY_THRESHOLD;
+                    emit DebugTimestamps(
+                        user,
+                        flightID,
+                        block.timestamp,
+                        policy.flightTimestamp,
+                        DELAY_THRESHOLD,
+                        meetsDelay
+                    );
                     if (
                         keccak256(bytes(policy.flightID)) == keccak256(bytes(flightID)) &&
                         !policy.hasPaidOut &&
-                        block.timestamp >= policy.flightTimestamp + DELAY_THRESHOLD
+                        meetsDelay
                     ) {
-                        policy.hasPaidOut = true;
-                        payable(subscriber).transfer(PAYOUT);
+                        if (isActive) {
+                            policy.hasPaidOut = true;
+                            payable(user).transfer(PAYOUT);
+                        }
                     }
                 }
             }
         }
     }
 
-    // Check contract balance
-    function getContractBalance() external view returns (uint256) {
-        return address(this).balance;
-    }
-
-    // Check if a subscription is active
     function isSubscribed(address user) external view returns (bool) {
         Subscription storage sub = subscriptions[user];
         return sub.isActive && block.timestamp < sub.startTime + SUBSCRIPTION_DURATION;
+    }
+
+    function getPolicyCount(address user) external view returns (uint256) {
+        return subscriptions[user].policies.length;
+    }
+
+    function getUserPolicies(address user) external view returns (string[] memory, uint256[] memory, bool[] memory) {
+        Subscription storage sub = subscriptions[user];
+        string[] memory flightIDs = new string[](sub.policies.length);
+        uint256[] memory timestamps = new uint256[](sub.policies.length);
+        bool[] memory paidOuts = new bool[](sub.policies.length);
+
+        for (uint i = 0; i < sub.policies.length; i++) {
+            flightIDs[i] = sub.policies[i].flightID;
+            timestamps[i] = sub.policies[i].flightTimestamp;
+            paidOuts[i] = sub.policies[i].hasPaidOut;
+        }
+        return (flightIDs, timestamps, paidOuts);
     }
 }
