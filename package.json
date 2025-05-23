@@ -1,6 +1,21 @@
 {
   "dependencies": {
     "@openzeppelin/test-helpers": "^0.5.16",
-    "ganache-cli": "^6.12.2"
-  }
+    "console-table": "^0.1.2",
+    "ganache-cli": "^6.12.2",
+    "table": "^6.9.0"
+  },
+  "name": "flightinsurance",
+  "version": "1.0.0",
+  "main": "interact.js",
+  "directories": {
+    "test": "test"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": ""
 }

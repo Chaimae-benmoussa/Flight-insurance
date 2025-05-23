@@ -5,7 +5,7 @@ contract FlightInsurance {
     address public oracle;
     address public owner;
 
-    uint256 constant PREMIUM = 0.1 ether;
+    uint256 constant PREMIUM = 5 ether;
     uint256 constant PAYOUT = 1 ether;
     uint256 constant DELAY_THRESHOLD = 2 hours;
     uint256 constant SUBSCRIPTION_DURATION = 30 days;
@@ -65,7 +65,7 @@ contract FlightInsurance {
     }
 
     function subscribe() external payable {
-        require(msg.value == PREMIUM, "Premium must be 0.1 ETH");
+        require(msg.value == PREMIUM, "Premium must be 5 ETH");
         require(!subscriptions[msg.sender].isActive, "Already subscribed");
 
         Subscription storage sub = subscriptions[msg.sender];
